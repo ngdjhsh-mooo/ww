@@ -1,0 +1,180 @@
+-- ============================================================
+-- SCRIPT MAP 58: SECRET KEY UNLOCK + SPINY WHEEL AUTO-SPIN
+-- Tốc độ: Bắn remote 5 luồng + ép nút Spin mỗi 0.1s
+-- ============================================================
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CoreGui = game:GetService("CoreGui")
+local TeleportService = game:GetService("TeleportService")
+local LocalPlayer = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+
+local Network = ReplicatedStorage:WaitForChild("Network")
+local isRunning = false
+
+-- [1] DÒ REMOTE UNLOCK SECRET (tự động)
+local UnlockRemote = Network:FindFirstChild("SecretRoom_Unlock") 
+                  or Network:FindFirstChild("UnlockSecret")
+                  or Network:FindFirstChild("InstanceSecret")
+if not UnlockRemote then
+    for _, c in ipairs(Network:GetChildren()) do
+        if string.find(string.lower(c.Name), "secret") and 
+           (c:IsA("RemoteFunction") or c:IsA("RemoteEvent")) then
+            UnlockRemote = c
+            break
+        end
+    end
+end
+if not UnlockRemote then
+    warn("[PS99] Không tìm thấy remote Secret - cập nhật tên thủ công.")
+    return
+end
+
+-- [2] DÒ REMOTE HOẶC NÚT SPIN (ưu tiên remote, nếu không có thì bấm GUI)
+local SpinRemote = Network:FindFirstChild("SpinWheel") 
+                or Network:FindFirstChild("WheelSpin")
+                or Network:FindFirstChild("SpinyWheel")
+local SpinButton = nil
+
+-- Hàm tìm nút Spin trong CoreGui (dự phòng nếu remote không có)
+local function FindSpinButton()
+    for _, gui in ipairs(CoreGui:GetChildren()) do
+        if gui:IsA("ScreenGui") and string.find(string.lower(gui.Name), "spin") then
+            local btn = gui:FindFirstChild("Spin", true) 
+                     or gui:FindFirstChild("SpinButton", true)
+            if btn and btn:IsA("TextButton") then
+                return btn
+            end
+        end
+    end
+    return nil
+end
+
+-- [3] HÀM UNLOCK (bắn xung)
+local function FireUnlock()
+    if UnlockRemote:IsA("RemoteFunction") then
+        UnlockRemote:InvokeServer()
+    else
+        UnlockRemote:FireServer()
+    end
+end
+
+-- [4] HÀM QUAY SPIN (ưu tiên remote, nếu không có thì bấm nút GUI)
+local function DoSpin()
+    if SpinRemote then
+        if SpinRemote:IsA("RemoteFunction") then
+            SpinRemote:InvokeServer()
+        else
+            SpinRemote:FireServer()
+        end
+    else
+        if not SpinButton then SpinButton = FindSpinButton() end
+        if SpinButton then
+            SpinButton:Activate()  -- bắt sự kiện click
+            SpinButton:Click()     -- fallback
+        end
+    end
+end
+
+-- [5] TỰ ĐỘNG CHẤP NHẬN HỘP THOẠI "Yes/No" KHI DÙNG KEY
+local function AutoAcceptDialog()
+    for _, gui in ipairs(CoreGui:GetChildren()) do
+        if gui:IsA("ScreenGui") then
+            local yesBtn = gui:FindFirstChild("Yes", true) 
+                        or gui:FindFirstChild("Accept", true)
+            if yesBtn and yesBtn:IsA("TextButton") then
+                yesBtn:Activate()
+                yesBtn:Click()
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- [6] NHẢY MAP 58 NẾU CHƯA Ở ĐÓ
+task.spawn(function()
+    if game.PlaceId ~= 8737899170 then
+        print("[PS99] Đang chuyển đến map 58...")
+        TeleportService:Teleport(8737899170, LocalPlayer)
+        wait(5)
+    end
+end)
+
+-- [7] LUỒNG CHÍNH - VỪA UNLOCK VỪA SPIN SONG SONG
+local function StartFullAuto()
+    if isRunning then return end
+    isRunning = true
+
+    -- Luồng Unlock (5 luồng, delay siêu thấp)
+    for i = 1, 5 do
+        task.spawn(function()
+            while isRunning do
+                FireUnlock()
+                task.wait(0.0005)
+            end
+        end)
+    end
+
+    -- Luồng Spin (3 luồng)
+    for i = 1, 3 do
+        task.spawn(function()
+            while isRunning do
+                DoSpin()
+                AutoAcceptDialog()   -- xử lý hộp thoại "Yes" nếu có
+                task.wait(0.01)
+            end
+        })
+    end
+
+    -- Luồng giám sát UI - tìm nút Spin nếu chưa có
+    task.spawn(function()
+        while isRunning do
+            if not SpinRemote and not SpinButton then
+                SpinButton = FindSpinButton()
+            end
+            task.wait(2)
+        end
+    end)
+end
+
+local function StopAll()
+    isRunning = false
+end
+
+-- [8] UI ĐIỀU KHIỂN (gọn nhẹ)
+local ScreenGui = Instance.new("ScreenGui", CoreGui)
+local Btn = Instance.new("TextButton", ScreenGui)
+Btn.Size = UDim2.new(0, 250, 0, 50)
+Btn.Position = UDim2.new(0.02, 0, 0.1, 0)
+Btn.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+Btn.Text = "[ START ] UNLOCK + SPIN"
+Btn.TextColor3 = Color3.new(1,1,1)
+Btn.Font = Enum.Font.GothamBold
+Btn.TextScaled = true
+
+local Status = Instance.new("TextLabel", ScreenGui)
+Status.Size = UDim2.new(0, 250, 0, 30)
+Status.Position = UDim2.new(0.02, 0, 0.16, 0)
+Status.BackgroundTransparency = 1
+Status.Text = "Trạng thái: DỪNG"
+Status.TextColor3 = Color3.fromRGB(200,200,200)
+Status.TextScaled = true
+
+Btn.MouseButton1Click:Connect(function()
+    if isRunning then
+        StopAll()
+        Btn.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+        Btn.Text = "[ START ] UNLOCK + SPIN"
+        Status.Text = "Trạng thái: DỪNG"
+        Status.TextColor3 = Color3.fromRGB(200,100,100)
+    else
+        StartFullAuto()
+        Btn.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+        Btn.Text = "[ STOP ] UNLOCK + SPIN"
+        Status.Text = "Trạng thái: ĐANG CHẠY (5u+3s)"
+        Status.TextColor3 = Color3.fromRGB(0,255,100)
+    end
+end)
+
+print("[PS99] Script UNLOCK + SPIN map 58 đã tải. Nhấn nút START để bắt đầu.")
