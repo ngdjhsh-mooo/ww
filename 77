@@ -1,0 +1,106 @@
+-- Auto Spin bằng VirtualUser (click chuột)
+-- Yêu cầu: Executor hỗ trợ VirtualUser (Synapse, Krnl, ScriptWare...)
+
+local VirtualUser = game:GetService("VirtualUser")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local gui = player.PlayerGui
+
+-- ===== TÌM NÚT SPIN TRÊN GUI =====
+local function findSpinButton()
+    for _, scr in ipairs(gui:GetChildren()) do
+        if scr:IsA("ScreenGui") then
+            for _, obj in ipairs(scr:GetDescendants()) do
+                if (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
+                    local text = (obj.Text or obj.Name or ""):lower()
+                    if text:find("spin") or text:find("quay") or text:find("wheel") then
+                        return obj
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local spinBtn = findSpinButton()
+local btn100 = nil
+
+-- Tìm nút 100%
+for _, scr in ipairs(gui:GetChildren()) do
+    if scr:IsA("ScreenGui") then
+        for _, obj in ipairs(scr:GetDescendants()) do
+            if (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
+                local text = (obj.Text or obj.Name or ""):lower()
+                if text:find("100") or text:find("100%") then
+                    btn100 = obj
+                    break
+                end
+            end
+        end
+        if btn100 then break end
+    end
+end
+
+-- ===== NẾU KHÔNG TÌM THẤY, DÙNG TỌA ĐỘ CỐ ĐỊNH =====
+local spinPosition = nil
+if spinBtn then
+    spinPosition = spinBtn.AbsolutePosition + Vector2.new(spinBtn.AbsoluteSize.X/2, spinBtn.AbsoluteSize.Y/2)
+    print("[AutoSpin] Tìm thấy nút Spin tại: " .. tostring(spinPosition))
+else
+    -- Tọa độ mặc định (có thể thay đổi cho phù hợp màn hình)
+    spinPosition = Vector2.new(500, 400)  -- Thay đổi nếu cần
+    warn("[AutoSpin] Không tìm thấy nút Spin, dùng tọa độ mặc định: " .. tostring(spinPosition))
+end
+
+local hundredPos = nil
+if btn100 then
+    hundredPos = btn100.AbsolutePosition + Vector2.new(btn100.AbsoluteSize.X/2, btn100.AbsoluteSize.Y/2)
+    print("[AutoSpin] Tìm thấy nút 100% tại: " .. tostring(hundredPos))
+else
+    hundredPos = Vector2.new(300, 400)  -- Tọa độ mặc định
+    warn("[AutoSpin] Không tìm thấy nút 100%, dùng tọa độ mặc định: " .. tostring(hundredPos))
+end
+
+-- ===== HÀM CLICK =====
+local function clickPos(pos)
+    pcall(function()
+        VirtualUser:ClickButton(pos.X, pos.Y)
+    end)
+end
+
+-- ===== AUTO SPIN LOOP =====
+local SPINS_TARGET = 1000
+local spinCount = 0
+local running = true
+local startTime = tick()
+
+task.spawn(function()
+    while running and spinCount < SPINS_TARGET do
+        -- 1. Click nút 100% mỗi 10 spin
+        if spinCount % 10 == 0 then
+            clickPos(hundredPos)
+            task.wait(0.03)
+        end
+        -- 2. Click nút Spin
+        clickPos(spinPosition)
+        spinCount = spinCount + 1
+        -- 3. Chờ 1ms (thực tế ~16ms do frame delay)
+        task.wait(0.001)
+    end
+    running = false
+    local elapsed = tick() - startTime
+    print(string.format("[AutoSpin] Hoàn thành: %d spin trong %.2fs (%.0f/phút)", spinCount, elapsed, spinCount/elapsed*60))
+end)
+
+-- Hiển thị tiến trình
+task.spawn(function()
+    while running do
+        task.wait(5)
+        local elapsed = tick() - startTime
+        print(string.format("[AutoSpin] Đã click %d spin (%.0f/phút)", spinCount, spinCount/elapsed*60))
+    end
+end)
+
+print("[AutoSpin] Đã chạy. Dùng _G.StopSpin() để dừng.")
+_G.StopSpin = function() running = false end
