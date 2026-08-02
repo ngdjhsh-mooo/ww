@@ -1,0 +1,125 @@
+-- Auto Spin + 100% - Bản quét toàn diện
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local gui = player.PlayerGui
+
+-- ========== 1. QUÉT REMOTE SPIN ==========
+local function findSpinRemote()
+    local candidates = {}
+    -- Duyệt đệ quy tất cả con cháu trong ReplicatedStorage
+    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+            local name = obj.Name:lower()
+            if name:find("spin") or name:find("wheel") or name:find("roulette") then
+                table.insert(candidates, obj)
+            end
+        end
+    end
+    return candidates
+end
+
+local remotes = findSpinRemote()
+if #remotes == 0 then
+    error("Không tìm thấy Remote nào liên quan spin/wheel. Hãy dùng RemoteSpy để lấy tên chính xác.")
+else
+    print("[AutoSpin] Tìm thấy " .. #remotes .. " Remote khả nghi:")
+    for i, r in ipairs(remotes) do
+        print("  [" .. i .. "] " .. r:GetFullName() .. " (loại: " .. r.ClassName .. ")")
+    end
+    -- Ưu tiên chọn cái đầu tiên (hoặc bạn có thể chọn theo tên)
+    local chosen = remotes[1]
+    print("[AutoSpin] Sử dụng: " .. chosen:GetFullName())
+    -- Gán biến toàn cục để dùng
+    _G.SpinRemote = chosen
+end
+
+-- ========== 2. QUÉT NÚT 100% TRONG GUI ==========
+local function find100Button()
+    local buttons = {}
+    for _, scr in ipairs(gui:GetChildren()) do
+        if scr:IsA("ScreenGui") then
+            for _, obj in ipairs(scr:GetDescendants()) do
+                if obj:IsA("TextButton") or obj:IsA("ImageButton") then
+                    local text = obj.Text or obj.Name or ""
+                    if text:find("100") or text:find("100%") or obj.Name:find("100") then
+                        table.insert(buttons, obj)
+                    end
+                end
+            end
+        end
+    end
+    return buttons
+end
+
+local hundredBtns = find100Button()
+if #hundredBtns == 0 then
+    warn("[AutoSpin] Không tìm thấy nút 100%. Có thể GUI chưa hiển thị hoặc nút có tên khác.")
+    warn("   Hãy mở bánh xe và chạy lại.")
+else
+    print("[AutoSpin] Tìm thấy nút 100%:")
+    for i, btn in ipairs(hundredBtns) do
+        print("  [" .. i .. "] " .. btn:GetFullName() .. " | Text: " .. (btn.Text or "none"))
+    end
+    local chosenBtn = hundredBtns[1]
+    _G.HundredButton = chosenBtn
+    -- Bấm thử
+    pcall(function()
+        chosenBtn:FireServer()
+        chosenBtn:Click()
+        print("[AutoSpin] Đã bấm nút 100%")
+    end)
+end
+
+-- ========== 3. AUTO SPIN (nếu có remote) ==========
+if _G.SpinRemote then
+    local remote = _G.SpinRemote
+    local SPINS_TARGET = 1000
+    local SPINS_PER_BURST = 25
+    local BURST_INTERVAL = 0.05
+    local spinCount = 0
+    local running = true
+    local startTime = tick()
+
+    local function doSpinBurst()
+        if not running then return end
+        for i = 1, SPINS_PER_BURST do
+            task.spawn(function()
+                pcall(function()
+                    remote:FireServer()  -- thử không tham số
+                end)
+            end)
+        end
+        spinCount = spinCount + SPINS_PER_BURST
+    end
+
+    task.spawn(function()
+        while running and spinCount < SPINS_TARGET do
+            -- Mỗi 100 spin bấm lại nút 100% nếu có
+            if spinCount % 100 == 0 and _G.HundredButton then
+                pcall(function()
+                    _G.HundredButton:FireServer()
+                    _G.HundredButton:Click()
+                end)
+            end
+            doSpinBurst()
+            task.wait(BURST_INTERVAL)
+        end
+        running = false
+        local elapsed = tick() - startTime
+        print(string.format("[AutoSpin] Hoàn thành: %d spin trong %.2fs (%.0f/phút)", spinCount, elapsed, spinCount/elapsed*60))
+    end)
+
+    task.spawn(function()
+        while running do
+            task.wait(5)
+            local elapsed = tick() - startTime
+            print(string.format("[AutoSpin] Đã gửi %d spin (%.0f/phút)", spinCount, spinCount/elapsed*60))
+        end
+    end)
+
+    print("[AutoSpin] Đã chạy. Dùng _G.StopSpin() để dừng.")
+    _G.StopSpin = function() running = false end
+else
+    error("Không có Remote để spin.")
+end
