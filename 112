@@ -1,0 +1,76 @@
+-- ===== AUTO SPIN + BẤM 100% =====
+local REMOTE_NAME = "SpinWheelRequest"  -- <-- Sửa tên đúng ở đây
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local gui = player.PlayerGui
+
+-- Tìm Remote
+local remote = ReplicatedStorage:FindFirstChild(REMOTE_NAME, true)  -- true = tìm đệ quy
+if not remote then
+    error("Không tìm thấy Remote '" .. REMOTE_NAME .. "'. Kiểm tra lại tên.")
+end
+print("[AutoSpin] Đã tìm thấy: " .. remote:GetFullName())
+
+-- Tìm nút 100%
+local function find100()
+    for _, scr in ipairs(gui:GetChildren()) do
+        if scr:IsA("ScreenGui") then
+            for _, btn in ipairs(scr:GetDescendants()) do
+                if (btn:IsA("TextButton") or btn:IsA("ImageButton")) then
+                    if (btn.Text and btn.Text:find("100")) or btn.Name:find("100") then
+                        return btn
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local btn100 = find100()
+if btn100 then
+    print("[AutoSpin] Tìm thấy nút 100%")
+    pcall(function()
+        btn100:FireServer()
+        btn100:Click()
+    end)
+else
+    warn("Không tìm thấy nút 100%, spin với mức mặc định")
+end
+
+-- Auto Spin
+local SPINS_TARGET = 1000
+local SPINS_PER_BURST = 25
+local BURST_INTERVAL = 0.05
+local spinCount = 0
+local running = true
+local startTime = tick()
+
+local function doBurst()
+    for i = 1, SPINS_PER_BURST do
+        task.spawn(function()
+            pcall(function()
+                remote:FireServer()  -- Nếu cần tham số, thêm vào đây
+            end)
+        end)
+    end
+    spinCount = spinCount + SPINS_PER_BURST
+end
+
+task.spawn(function()
+    while running and spinCount < SPINS_TARGET do
+        if spinCount % 100 == 0 and btn100 then
+            pcall(function() btn100:Click() end)
+        end
+        doBurst()
+        task.wait(BURST_INTERVAL)
+    end
+    running = false
+    local elapsed = tick() - startTime
+    print(string.format("[AutoSpin] %d spin trong %.2fs (%.0f/phút)", spinCount, elapsed, spinCount/elapsed*60))
+end)
+
+print("[AutoSpin] Đã chạy. Dùng _G.StopSpin() để dừng.")
+_G.StopSpin = function() running = false end
