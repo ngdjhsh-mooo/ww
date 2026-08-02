@@ -1,0 +1,120 @@
+-- Auto Spin + Tự động chọn mức 100% (World 4)
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local player = Players.LocalPlayer
+local gui = player.PlayerGui
+
+-- ========== TÌM NÚT 100% TRÊN GUI ==========
+local function find100PercentButton()
+    -- Duyệt tất cả GUI để tìm nút có text "100%"
+    for _, screenGui in ipairs(gui:GetChildren()) do
+        if screenGui:IsA("ScreenGui") then
+            local button = screenGui:FindFirstChild("100%") or screenGui:FindFirstChild("Multiplier100")
+            if button and button:IsA("TextButton") then
+                return button
+            end
+            -- Tìm sâu hơn nếu có Frame
+            for _, child in ipairs(screenGui:GetDescendants()) do
+                if child:IsA("TextButton") and child.Text and child.Text:find("100") then
+                    return child
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local btn100 = find100PercentButton()
+if btn100 then
+    print("[AutoSpin] Đã tìm thấy nút 100%")
+else
+    warn("[AutoSpin] Không tìm thấy nút 100%, vẫn chạy spin nhưng dùng mức mặc định")
+end
+
+-- ========== HÀM BẤM NÚT 100% ==========
+local function click100()
+    if btn100 and btn100:IsVisible() then
+        pcall(function()
+            btn100:FireServer()              -- Gửi sự kiện (nếu có)
+            btn100:Click()                   -- Giả lập click
+            -- Hoặc dùng VirtualUser:
+            -- game:GetService("VirtualUser"):ClickButton()
+        end)
+        return true
+    end
+    return false
+end
+
+-- Bấm 1 lần lúc đầu
+click100()
+task.wait(0.5)
+click100() -- bấm lại cho chắc
+
+-- ========== TÌM REMOTE SPIN ==========
+local remoteNames = {
+    "SpinWheelRequest", "WheelSpinRequest", "SpinWheel", 
+    "WheelSpin", "RemoteWheel", "SpinRemote"
+}
+local remote = nil
+for _, name in ipairs(remoteNames) do
+    remote = ReplicatedStorage:FindFirstChild(name)
+    if remote then break end
+end
+if not remote then
+    for _, child in ipairs(ReplicatedStorage:GetChildren()) do
+        if child:IsA("RemoteEvent") and (child.Name:lower():find("spin") or child.Name:lower():find("wheel")) then
+            remote = child
+            break
+        end
+    end
+end
+if not remote then error("Không tìm thấy RemoteEvent spin.") end
+print("[AutoSpin] Remote spin: " .. remote.Name)
+
+-- ========== AUTO SPIN BURST ==========
+local SPINS_TARGET = 1000
+local SPINS_PER_BURST = 25
+local BURST_INTERVAL = 0.05
+local spinCount = 0
+local running = true
+local startTime = tick()
+
+local function doSpinBurst()
+    if not running then return end
+    for i = 1, SPINS_PER_BURST do
+        task.spawn(function()
+            pcall(function()
+                remote:FireServer()  -- Không tham số, có thể thêm "Spin" nếu cần
+            end)
+        end)
+    end
+    spinCount = spinCount + SPINS_PER_BURST
+end
+
+-- Vòng lặp chính
+task.spawn(function()
+    while running and spinCount < SPINS_TARGET do
+        -- Trước mỗi đợt spin, bấm lại nút 100% để đảm bảo
+        if spinCount % 100 == 0 then  -- mỗi 100 spin bấm lại 1 lần
+            click100()
+            task.wait(0.1)
+        end
+        doSpinBurst()
+        task.wait(BURST_INTERVAL)
+    end
+    running = false
+    local elapsed = tick() - startTime
+    print(string.format("[AutoSpin] Hoàn thành: %d spin trong %.2fs (%.0f/phút)", spinCount, elapsed, spinCount/elapsed*60))
+end)
+
+-- Hiển thị tiến trình
+task.spawn(function()
+    while running do
+        task.wait(5)
+        local elapsed = tick() - startTime
+        print(string.format("[AutoSpin] Đã gửi %d spin (%.0f/phút)", spinCount, spinCount/elapsed*60))
+    end
+end)
+
+print("[AutoSpin] Đã kích hoạt. Dùng _G.StopSpin() để dừng.")
+_G.StopSpin = function() running = false end
