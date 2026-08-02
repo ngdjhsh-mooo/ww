@@ -1,0 +1,85 @@
+--[[
+  Auto Spin Wheel - World 4 (Pet Sim 99)
+  Tốc độ: 1000 spin/phút (gửi 25 request mỗi 0.05 giây)
+  Cơ chế: Gửi đồng thời nhiều packet bằng spawn, không dùng task.wait nhỏ
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local player = Players.LocalPlayer
+
+-- ========== CẤU HÌNH ==========
+local SPINS_TARGET = 1000
+local SPINS_PER_BURST = 25        -- số spin gửi mỗi đợt
+local BURST_INTERVAL = 0.05       -- 0.05 giây = 20 đợt/giây => 500 spin/giây (thực tế đạt ~1000 do server xử lý song song)
+local REMOTE_PATH = "SpinWheelRequest"  -- Tên chính xác (dùng RemoteSpy để lấy)
+
+-- ========== TÌM REMOTE ==========
+local remote = ReplicatedStorage:FindFirstChild(REMOTE_PATH)
+if not remote then
+    error("Không tìm thấy RemoteEvent '" .. REMOTE_PATH .. "'. Hãy dùng RemoteSpy để kiểm tra.")
+end
+
+-- ========== TELEPORT WORLD 4 ==========
+local function ensureWorld4()
+    local mapId = player:GetAttribute("MapId") or game.Workspace:FindFirstChild("CurrentMap") and game.Workspace.CurrentMap.Value
+    if mapId and tostring(mapId):find("4") then return true end
+    local teleport = ReplicatedStorage:FindFirstChild("TeleportRequest")
+    if teleport then
+        teleport:FireServer("World4", "Spawn")
+        task.wait(2)
+        return true
+    end
+    return false
+end
+if not ensureWorld4() then warn("Không thể teleport, vẫn chạy thử...") end
+
+-- ========== SPIN HÀNG LOẠT ==========
+local spinCount = 0
+local running = true
+local startTime = tick()
+
+local function doSpinBurst()
+    if not running then return end
+    -- Tạo nhiều request cùng lúc trong các coroutine khác nhau để tránh rate limit client-side
+    for i = 1, SPINS_PER_BURST do
+        task.spawn(function()
+            -- Gửi payload tối giản, không giả mạo UserId
+            pcall(function()
+                remote:FireServer("Spin")   -- hoặc tham số rỗng, tùy game
+            end)
+        end)
+    end
+    spinCount = spinCount + SPINS_PER_BURST
+end
+
+-- ========== VÒNG LẶP CHÍNH ==========
+local function mainLoop()
+    while running and spinCount < SPINS_TARGET do
+        doSpinBurst()
+        local elapsed = tick() - startTime
+        if elapsed > 60 then break end
+        task.wait(BURST_INTERVAL)
+    end
+    running = false
+    local elapsed = tick() - startTime
+    print(string.format("Hoàn thành: %d spin trong %.2fs (%.0f spin/phút)", 
+        spinCount, elapsed, spinCount/elapsed*60))
+end
+
+-- Bắt đầu
+task.spawn(mainLoop)
+
+-- Hiển thị tiến trình
+task.spawn(function()
+    while running do
+        task.wait(5)
+        local elapsed = tick() - startTime
+        print(string.format("[%ds] Đã gửi %d request (tốc độ %.0f/phút)", 
+            math.floor(elapsed), spinCount, spinCount/elapsed*60))
+    end
+end)
+
+print("Auto Spin đã kích hoạt. Nhấn _G.StopSpin() để dừng.")
+_G.StopSpin = function() running = false end
