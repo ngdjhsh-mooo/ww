@@ -1,14 +1,20 @@
 --[[
     ╔══════════════════════════════════════════════════════════════╗
-    ║      AXIOM — PS99 WORLD 2 (MAP 143) CLAW MACHINE v3.0       ║
-    ║      Engineered for Pet Simulator 99 Instancing Framework    ║
-    ║      GitHub / Loadstring Compatible                          ║
+    ║      AXIOM — PS99 WORLD 2 (MAP 143) CLAW MACHINE v4.0       ║
+    ║      Executor-Proof GUI + Instant Auto-Runner                ║
+    ║      Loadstring / GitHub Ready                               ║
     ╚══════════════════════════════════════════════════════════════╝
 ]]--
 
+-- Prevent multiple instances
+if getgenv and getgenv().AxiomLoaded then
+    if getgenv().AxiomCleanup then getgenv().AxiomCleanup() end
+end
+if getgenv then getgenv().AxiomLoaded = true end
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local TeleportService = game:GetService("TeleportService")
@@ -16,464 +22,411 @@ local HttpService = game:GetService("HttpService")
 local Workspace = game:GetService("Workspace")
 
 local Player = Players.LocalPlayer
-local Character = Player.Character or Player.CharacterAdded:Wait()
-local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 
--- ═══════════════════════════════════════════
--- PS99 FRAMEWORK HOOKS
--- ═══════════════════════════════════════════
-local PS99 = {
-    Library = nil,
-    Network = nil,
-    Instancing = nil
-}
-
-pcall(function()
-    if ReplicatedStorage:FindFirstChild("Library") then
-        local lib = ReplicatedStorage.Library
-        if lib:FindFirstChild("Client") then
-            PS99.Library = require(lib.Client)
-            PS99.Network = PS99.Library.Network
+-- Safe Parent Finder for Executed Guis
+local function GetSafeGuiParent()
+    local success, parent = pcall(function()
+        if gethui then return gethui() end
+        if syn and syn.protect_gui then
+            local g = Instance.new("Folder")
+            syn.protect_gui(g)
+            g.Parent = CoreGui
+            return g
         end
-    end
-end)
-
-local function FirePS99Remote(name, ...)
-    if PS99.Network and PS99.Network.Fire then
-        pcall(function()
-            PS99.Network.Fire(name, ...)
-        end)
-    end
-    -- Fallback to direct network folder
-    local netFolder = ReplicatedStorage:FindFirstChild("Network")
-    if netFolder then
-        local remote = netFolder:FindFirstChild(name)
-        if remote and remote:IsA("RemoteEvent") then
-            pcall(function() remote:FireServer(...) end)
-        end
-    end
-end
-
-local function InvokePS99Remote(name, ...)
-    if PS99.Network and PS99.Network.Invoke then
-        local res
-        pcall(function()
-            res = PS99.Network.Invoke(name, ...)
-        end)
-        return res
-    end
-    local netFolder = ReplicatedStorage:FindFirstChild("Network")
-    if netFolder then
-        local remote = netFolder:FindFirstChild(name)
-        if remote and remote:IsA("RemoteFunction") then
-            local success, res = pcall(function() return remote:InvokeServer(...) end)
-            if success then return res end
-        end
-    end
-    return nil
+        return CoreGui
+    end)
+    if success and parent then return parent end
+    return Player:WaitForChild("PlayerGui")
 end
 
 -- ═══════════════════════════════════════════
--- CONFIGURATION
+-- CONFIG & STATE
 -- ═══════════════════════════════════════════
 local Config = {
-    FullAuto = false,
-    AutoEnterMinigame = true,
+    FullAuto = true,           -- Starts automatically
+    AutoTeleportMap = true,
     AutoPlayClaw = true,
-    AutoGrabEggs = true,
-    AutoServerHop = true,
+    AutoHopWhenEmpty = true,
     MinEggsBeforeHop = 0,
-    EmptyCheckThreshold = 3,
-    
-    -- Map 143 Specifics
-    TargetMapId = 143,
-    MinigameInstanceName = "ClawMachine", -- PS99 Instance ID
-    World2PlaceId = 16498369169,
-    
-    -- Tuning
-    CycleDelay = 0.4,
-    ServerHopCooldown = 8,
-    AntiAFK = true,
-    ToggleKey = Enum.KeyCode.RightShift,
-    UIVisible = true
+    EmptyCheckCount = 3,
+    CycleDelay = 0.5,
+    TargetArea = 143,
+    PlaceId = game.PlaceId
 }
 
 local State = {
-    EggsFound = 0,
+    Eggs = 0,
     EmptyStreak = 0,
+    TotalPlays = 0,
     TotalHops = 0,
-    TotalPlayed = 0,
     IsHopping = false,
-    InMinigame = false,
-    LastHopTick = 0
+    Status = "Starting Up...",
+    StartTime = tick()
 }
 
 -- ═══════════════════════════════════════════
--- ANTI-AFK
+-- ANTI-AFK (Zero Crash Implementation)
 -- ═══════════════════════════════════════════
-if Config.AntiAFK then
-    Player.Idled:Connect(function()
-        local vu = game:GetService("VirtualUser")
-        vu:Button2Down(Vector2.new(0,0), Workspace.CurrentCamera.CFrame)
-        task.wait(1)
-        vu:Button2Up(Vector2.new(0,0), Workspace.CurrentCamera.CFrame)
-    end)
-end
-
--- ═══════════════════════════════════════════
--- MAP 143 & MINIGAME INSTANCE TELEPORTER
--- ═══════════════════════════════════════════
-local MinigameEngine = {}
-
-function MinigameEngine:TeleportToMap143()
-    -- Method 1: PS99 Area Teleport
+task.spawn(function()
     pcall(function()
-        FirePS99Remote("Teleports_RequestTeleport", "Area 143")
-        FirePS99Remote("Teleporting_TeleportArea", 143)
+        Player.Idled:Connect(function()
+            local vu = game:GetService("VirtualUser")
+            vu:CaptureController()
+            vu:ClickButton2(Vector2.new(50, 50))
+        end)
     end)
-    
-    -- Method 2: Physical Area Search
-    local mapFolder = Workspace:FindFirstChild("Map") or Workspace:FindFirstChild("Worlds")
-    if mapFolder then
-        for _, area in ipairs(mapFolder:GetDescendants()) do
-            if area.Name:find("143") or area.Name:lower():find("claw") or area.Name:lower():find("arcade") then
-                local part = area:IsA("BasePart") and area or (area:IsA("Model") and area.PrimaryPart)
-                if part then
-                    HumanoidRootPart.CFrame = part.CFrame + Vector3.new(0, 5, 0)
-                    break
-                end
+end)
+
+-- ═══════════════════════════════════════════
+-- PS99 NETWORK BRIDGE
+-- ═══════════════════════════════════════════
+local function FireNetwork(name, ...)
+    local args = {...}
+    -- Method 1: PS99 Library Fire
+    pcall(function()
+        local lib = require(ReplicatedStorage.Library.Client)
+        if lib and lib.Network and lib.Network.Fire then
+            lib.Network.Fire(name, unpack(args))
+        end
+    end)
+    -- Method 2: Direct Network Folder
+    pcall(function()
+        local net = ReplicatedStorage:FindFirstChild("Network")
+        if net then
+            local rem = net:FindFirstChild(name)
+            if rem and rem:IsA("RemoteEvent") then
+                rem:FireServer(unpack(args))
+            elseif rem and rem:IsA("RemoteFunction") then
+                rem:InvokeServer(unpack(args))
             end
         end
-    end
+    end)
 end
 
-function MinigameEngine:EnterClawMinigame()
-    print("[Axiom] Attempting direct Minigame Instance Request...")
+-- ═══════════════════════════════════════════
+-- TELEPORT & MINIGAME ENGINE
+-- ═══════════════════════════════════════════
+local Engine = {}
+
+function Engine:TeleportArea143()
+    local char = Player.Character or Player.CharacterAdded:Wait()
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    State.Status = "Warping to Area 143..."
     
-    -- 1. Try PS99 Instancing Remote directly
-    local instanceNames = {"ClawMachine", "Claw Machine", "Arcade", "Claw_Machine", "MiniGame_ClawMachine"}
-    for _, inst in ipairs(instanceNames) do
-        pcall(function()
-            InvokePS99Remote("Instancing_RequestTeleport", inst)
-            FirePS99Remote("Instancing_RequestTeleport", inst)
-            InvokePS99Remote("Instancing_Enter", inst)
-            FirePS99Remote("Instancing_Enter", inst)
-        end)
-    end
+    -- Try remotes
+    FireNetwork("Teleports_RequestTeleport", "Area 143")
+    FireNetwork("Teleports_RequestTeleport", 143)
+    FireNetwork("Teleports_RequestTeleport", "143 | Tiki")
+    FireNetwork("Teleports_RequestTeleport", "Tiki")
     
-    -- 2. Scan for physical prompts / pads in map 143
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("ProximityPrompt") and (obj.Parent.Name:lower():find("claw") or obj.Parent.Name:lower():find("enter") or obj.Parent.Name:lower():find("play")) then
-            fireproximityprompt(obj)
-        elseif obj:IsA("TouchTransmitter") and obj.Parent and obj.Parent.Name:lower():find("portal") then
-            firetouchinterest(HumanoidRootPart, obj.Parent, 0)
-            task.wait(0.1)
-            firetouchinterest(HumanoidRootPart, obj.Parent, 1)
+    -- Physical Search
+    pcall(function()
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj:IsA("BasePart") and (obj.Name:find("143") or obj.Name:lower():find("claw")) then
+                hrp.CFrame = obj.CFrame + Vector3.new(0, 5, 0)
+                break
+            end
         end
-    end
+    end)
 end
 
-function MinigameEngine:CheckIfInMinigame()
-    -- Check if instance world loaded or claw container is present
-    if Workspace:FindFirstChild("__INSTANCES") or Workspace:FindFirstChild("ActiveInstance") or Workspace:FindFirstChild("ClawMachine") then
-        State.InMinigame = true
-        return true
+function Engine:EnterClawMachine()
+    State.Status = "Entering Claw Minigame..."
+    
+    -- PS99 Instancing calls
+    local instances = {"ClawMachine", "Claw Machine", "Arcade", "Minigame_ClawMachine"}
+    for _, inst in ipairs(instances) do
+        FireNetwork("Instancing_RequestTeleport", inst)
+        FireNetwork("Instancing_Enter", inst)
+        FireNetwork("Minigames_RequestPlay", inst)
     end
     
-    -- Check UI elements
-    local pGui = Player:FindFirstChild("PlayerGui")
-    if pGui and (pGui:FindFirstChild("ClawMachine") or pGui:FindFirstChild("ArcadeMachine") or pGui:FindFirstChild("_MACHINES")) then
-        State.InMinigame = true
-        return true
-    end
+    -- Proximity / Touch fallback
+    pcall(function()
+        local char = Player.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        for _, p in ipairs(Workspace:GetDescendants()) do
+            if p:IsA("ProximityPrompt") and (p.Parent.Name:lower():find("claw") or p.Parent.Name:lower():find("play") or p.Parent.Name:lower():find("enter")) then
+                fireproximityprompt(p)
+            end
+        end
+    end)
+end
+
+function Engine:PlayClaw()
+    State.Status = "Grabbing Eggs..."
+    FireNetwork("ClawMachine_Play")
+    FireNetwork("ClawMachine_Drop")
+    FireNetwork("ClawMachine_Grab")
+    FireNetwork("Arcade_Drop")
+    FireNetwork("Arcade_Play")
     
-    return false
+    State.TotalPlays = State.TotalPlays + 1
 end
 
 -- ═══════════════════════════════════════════
--- EGG & PRIZE SCANNER
+-- EGG DETECTOR
 -- ═══════════════════════════════════════════
-local EggScanner = {}
-
-function EggScanner:CountEggs()
+function Engine:CountEggs()
     local count = 0
-    local targetContainers = {
-        Workspace:FindFirstChild("__INSTANCES"),
-        Workspace:FindFirstChild("ActiveInstance"),
-        Workspace:FindFirstChild("ClawMachine"),
-        Workspace:FindFirstChild("Map"),
-        Workspace
-    }
-    
-    for _, container in ipairs(targetContainers) do
-        if container then
-            for _, obj in ipairs(container:GetDescendants()) do
-                local name = obj.Name:lower()
-                if (name:find("egg") or name:find("prize") or name:find("reward") or name:find("capsule") or name:find("loot")) 
-                   and (obj:IsA("BasePart") or obj:IsA("Model") or obj:IsA("MeshPart")) then
-                    if obj:IsA("BasePart") and obj.Transparency < 1 and obj.Size.Magnitude > 0.5 then
+    pcall(function()
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj:IsA("BasePart") or obj:IsA("MeshPart") or obj:IsA("Model") then
+                local n = obj.Name:lower()
+                if (n:find("egg") or n:find("prize") or n:find("capsule") or n:find("toy") or n:find("huge") or n:find("titanic")) then
+                    if obj:IsA("BasePart") and obj.Transparency < 0.9 and obj.Size.Magnitude > 0.5 then
                         count = count + 1
-                    elseif obj:IsA("Model") and obj.PrimaryPart and obj.PrimaryPart.Transparency < 1 then
+                    elseif obj:IsA("Model") and obj.PrimaryPart and obj.PrimaryPart.Transparency < 0.9 then
                         count = count + 1
                     end
                 end
             end
         end
-    end
-    
-    State.EggsFound = count
+    end)
+    State.Eggs = count
     return count
 end
 
-function EggScanner:IsDepleted()
-    local count = self:CountEggs()
-    if count <= Config.MinEggsBeforeHop then
-        State.EmptyStreak = State.EmptyStreak + 1
-    else
-        State.EmptyStreak = 0
-    end
-    
-    return State.EmptyStreak >= Config.EmptyCheckThreshold
-end
-
 -- ═══════════════════════════════════════════
--- CLAW AUTOMATION CORE
+-- SERVER HOPPER
 -- ═══════════════════════════════════════════
-local ClawBot = {}
+local Hopper = {}
 
-function ClawBot:DropClawOnBestEgg()
-    -- Direct remote call to drop claw
-    local remotes = {
-        "ClawMachine_Play", "ClawMachine_Drop", "ClawMachine_Grab",
-        "Arcade_Play", "Claw_Drop", "Minigame_Play"
-    }
-    
-    for _, rem in ipairs(remotes) do
-        FirePS99Remote(rem)
-        InvokePS99Remote(rem)
-    end
-    
-    -- If there are interactive claw parts, move humanoid near control or touch
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj.Name == "ClawLever" or obj.Name == "PlayButton" or obj.Name == "DropButton" then
-            if obj:IsA("ProximityPrompt") then
-                fireproximityprompt(obj)
-            elseif obj:IsA("ClickDetector") then
-                fireclickdetector(obj)
-            end
-        end
-    end
-    
-    State.TotalPlayed = State.TotalPlayed + 1
-end
-
--- ═══════════════════════════════════════════
--- ROBUST SERVER HOPPER (PS99 PLACE ID)
--- ═══════════════════════════════════════════
-local ServerHop = {}
-
-function ServerHop:Hop()
+function Hopper:Hop()
     if State.IsHopping then return end
-    if (tick() - State.LastHopTick) < Config.ServerHopCooldown then return end
-    
     State.IsHopping = true
-    State.LastHopTick = tick()
+    State.Status = "Hopping Servers..."
     State.TotalHops = State.TotalHops + 1
     
-    print("[Axiom] Hopping server... fetching server list for PlaceId " .. game.PlaceId)
-    
-    local placeId = game.PlaceId
-    local serversApi = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
-    
-    local success, response = pcall(function()
-        return game:HttpGet(serversApi)
-    end)
-    
-    if success and response then
-        local data = HttpService:JSONDecode(response)
-        if data and data.data then
-            local validServers = {}
-            for _, s in ipairs(data.data) do
-                if s.playing and s.maxPlayers and s.id ~= game.JobId and s.playing < s.maxPlayers then
-                    table.insert(validServers, s.id)
-                end
-            end
-            
-            if #validServers > 0 then
-                local chosenServer = validServers[math.random(1, math.min(10, #validServers))]
-                print("[Axiom] Teleporting to server ID: " .. chosenServer)
-                TeleportService:TeleportToPlaceInstance(placeId, chosenServer, Player)
-                task.wait(10)
-            end
-        end
-    end
-    
-    -- Fallback normal teleport
-    TeleportService:Teleport(placeId, Player)
-    State.IsHopping = false
-end
-
--- ═══════════════════════════════════════════
--- MAIN ORCHESTRATION LOOP
--- ═══════════════════════════════════════════
-local function RunPipeline()
     task.spawn(function()
-        while true do
-            if Config.FullAuto then
-                -- 1. Check if we need to enter minigame
-                if not MinigameEngine:CheckIfInMinigame() then
-                    MinigameEngine:TeleportToMap143()
-                    task.wait(1)
-                    MinigameEngine:EnterClawMinigame()
-                    task.wait(2)
-                end
-                
-                -- 2. Check egg count
-                if Config.AutoServerHop and EggScanner:IsDepleted() then
-                    print("[Axiom] 0 Eggs remaining detected! Initiating server hop...")
-                    ServerHop:Hop()
-                    task.wait(10)
-                else
-                    -- 3. Execute Claw Play
-                    if Config.AutoPlayClaw then
-                        ClawBot:DropClawOnBestEgg()
+        local placeId = game.PlaceId
+        local success, result = pcall(function()
+            return game:HttpGet("https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100")
+        end)
+        
+        if success and result then
+            local data = HttpService:JSONDecode(result)
+            if data and data.data then
+                local goodServers = {}
+                for _, s in ipairs(data.data) do
+                    if s.playing and s.maxPlayers and s.id ~= game.JobId and s.playing < s.maxPlayers then
+                        table.insert(goodServers, s.id)
                     end
                 end
+                if #goodServers > 0 then
+                    local target = goodServers[math.random(1, math.min(10, #goodServers))]
+                    TeleportService:TeleportToPlaceInstance(placeId, target, Player)
+                    task.wait(10)
+                end
             end
-            task.wait(Config.CycleDelay)
         end
+        TeleportService:Teleport(placeId, Player)
+        State.IsHopping = false
     end)
 end
 
 -- ═══════════════════════════════════════════
--- COMPACT MODERN UI
+-- RELIABLE UI BUILDER
 -- ═══════════════════════════════════════════
-local function BuildUI()
-    local old = Player.PlayerGui:FindFirstChild("AxiomPS99Claw")
-    if old then old:Destroy() end
+local function CreateUI()
+    local targetParent = GetSafeGuiParent()
+    
+    local existing = targetParent:FindFirstChild("AxiomPS99_ClawUI")
+    if existing then existing:Destroy() end
     
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "AxiomPS99Claw"
+    ScreenGui.Name = "AxiomPS99_ClawUI"
     ScreenGui.ResetOnSpawn = false
-    ScreenGui.Parent = Player.PlayerGui
+    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    ScreenGui.Parent = targetParent
     
-    local Main = Instance.new("Frame")
-    Main.Size = UDim2.new(0, 310, 0, 390)
-    Main.Position = UDim2.new(0, 30, 0.5, -195)
-    Main.BackgroundColor3 = Color3.fromRGB(15, 17, 26)
-    Main.BorderSizePixel = 0
-    Main.Parent = ScreenGui
+    local Frame = Instance.new("Frame")
+    Frame.Name = "MainFrame"
+    Frame.Size = UDim2.new(0, 320, 0, 370)
+    Frame.Position = UDim2.new(0, 25, 0.4, -185)
+    Frame.BackgroundColor3 = Color3.fromRGB(15, 17, 26)
+    Frame.BorderSizePixel = 0
+    Frame.Active = true
+    Frame.Draggable = true
+    Frame.Parent = ScreenGui
     
     local Corner = Instance.new("UICorner")
-    Corner.CornerRadius = UDim.new(0, 10)
-    Corner.Parent = Main
+    Corner.CornerRadius = UDim.new(0, 12)
+    Corner.Parent = Frame
     
     local Stroke = Instance.new("UIStroke")
-    Stroke.Color = Color3.fromRGB(130, 90, 255)
-    Stroke.Thickness = 1.8
-    Stroke.Parent = Main
+    Stroke.Color = Color3.fromRGB(120, 80, 255)
+    Stroke.Thickness = 2
+    Stroke.Parent = Frame
     
+    -- Title
     local Title = Instance.new("TextLabel")
     Title.Size = UDim2.new(1, -20, 0, 35)
     Title.Position = UDim2.new(0, 15, 0, 8)
     Title.BackgroundTransparency = 1
-    Title.Text = "⚡ AXIOM — PS99 CLAW MAP 143"
-    Title.TextColor3 = Color3.fromRGB(180, 140, 255)
+    Title.Text = "⚡ AXIOM — PS99 CLAW v4.0"
+    Title.TextColor3 = Color3.fromRGB(190, 150, 255)
     Title.Font = Enum.Font.GothamBold
-    Title.TextSize = 14
+    Title.TextSize = 15
     Title.TextXAlignment = Enum.TextXAlignment.Left
-    Title.Parent = Main
+    Title.Parent = Frame
     
-    local StatBox = Instance.new("TextLabel")
-    StatBox.Size = UDim2.new(1, -30, 0, 45)
-    StatBox.Position = UDim2.new(0, 15, 0, 45)
-    StatBox.BackgroundColor3 = Color3.fromRGB(22, 25, 38)
-    StatBox.Text = "🥚 Eggs: Scanning... | Hops: 0\nStatus: Ready"
-    StatBox.TextColor3 = Color3.fromRGB(160, 230, 180)
-    StatBox.Font = Enum.Font.GothamMedium
-    StatBox.TextSize = 11
-    StatBox.Parent = Main
+    -- Status Card
+    local Card = Instance.new("Frame")
+    Card.Size = UDim2.new(1, -30, 0, 60)
+    Card.Position = UDim2.new(0, 15, 0, 45)
+    Card.BackgroundColor3 = Color3.fromRGB(22, 25, 40)
+    Card.BorderSizePixel = 0
+    Card.Parent = Frame
     
-    local StatCorner = Instance.new("UICorner")
-    StatCorner.CornerRadius = UDim.new(0, 6)
-    StatCorner.Parent = StatBox
+    local CardCorner = Instance.new("UICorner")
+    CardCorner.CornerRadius = UDim.new(0, 8)
+    CardCorner.Parent = Card
     
-    local function AddBtn(text, pos_y, color, callback)
+    local StatusText = Instance.new("TextLabel")
+    StatusText.Size = UDim2.new(1, -16, 0, 24)
+    StatusText.Position = UDim2.new(0, 8, 0, 4)
+    StatusText.BackgroundTransparency = 1
+    StatusText.Text = "🟢 Status: " .. State.Status
+    StatusText.TextColor3 = Color3.fromRGB(120, 255, 170)
+    StatusText.Font = Enum.Font.GothamBold
+    StatusText.TextSize = 12
+    StatusText.TextXAlignment = Enum.TextXAlignment.Left
+    StatusText.Parent = Card
+    
+    local StatDetails = Instance.new("TextLabel")
+    StatDetails.Size = UDim2.new(1, -16, 0, 24)
+    StatDetails.Position = UDim2.new(0, 8, 0, 28)
+    StatDetails.BackgroundTransparency = 1
+    StatDetails.Text = "🥚 Eggs: 0 | 🎮 Drops: 0 | 🔄 Hops: 0"
+    StatDetails.TextColor3 = Color3.fromRGB(170, 170, 210)
+    StatDetails.Font = Enum.Font.GothamMedium
+    StatDetails.TextSize = 11
+    StatDetails.TextXAlignment = Enum.TextXAlignment.Left
+    StatDetails.Parent = Card
+    
+    -- Buttons
+    local function MakeBtn(text, y, col, cb)
         local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1, -30, 0, 34)
-        btn.Position = UDim2.new(0, 15, 0, pos_y)
-        btn.BackgroundColor3 = color
+        btn.Size = UDim2.new(1, -30, 0, 36)
+        btn.Position = UDim2.new(0, 15, 0, y)
+        btn.BackgroundColor3 = col
+        btn.BorderSizePixel = 0
         btn.Text = text
         btn.TextColor3 = Color3.fromRGB(255, 255, 255)
         btn.Font = Enum.Font.GothamBold
         btn.TextSize = 12
-        btn.Parent = Main
+        btn.Parent = Frame
         
         local bCorner = Instance.new("UICorner")
-        bCorner.CornerRadius = UDim.new(0, 6)
+        bCorner.CornerRadius = UDim.new(0, 8)
         bCorner.Parent = btn
         
         btn.MouseButton1Click:Connect(function()
-            callback(btn)
+            cb(btn)
         end)
         return btn
     end
     
-    AddBtn("🔥 TOGGLE FULL AUTO (MAP 143 + HOP)", 100, Color3.fromRGB(110, 50, 220), function(btn)
+    local autoBtn = MakeBtn("✔ FULL AUTO ACTIVE (CLICK TO STOP)", 115, Color3.fromRGB(30, 160, 80), function(btn)
         Config.FullAuto = not Config.FullAuto
         if Config.FullAuto then
             btn.BackgroundColor3 = Color3.fromRGB(30, 160, 80)
-            btn.Text = "✔ FULL AUTO RUNNING"
+            btn.Text = "✔ FULL AUTO ACTIVE (CLICK TO STOP)"
         else
             btn.BackgroundColor3 = Color3.fromRGB(110, 50, 220)
-            btn.Text = "🔥 TOGGLE FULL AUTO (MAP 143 + HOP)"
+            btn.Text = "🔥 START FULL AUTO PIPELINE"
         end
     end)
     
-    AddBtn("🗺 FORCE TP TO MAP 143 / CLAW", 142, Color3.fromRGB(40, 60, 120), function()
-        MinigameEngine:TeleportToMap143()
-        MinigameEngine:EnterClawMinigame()
+    MakeBtn("🗺 FORCE TP MAP 143", 160, Color3.fromRGB(45, 65, 120), function()
+        Engine:TeleportArea143()
     end)
     
-    AddBtn("🎮 DROP CLAW NOW", 184, Color3.fromRGB(50, 100, 70), function()
-        ClawBot:DropClawOnBestEgg()
+    MakeBtn("🚪 ENTER CLAW MINIGAME", 205, Color3.fromRGB(60, 45, 120), function()
+        Engine:EnterClawMachine()
     end)
     
-    AddBtn("🔄 MANUAL SERVER HOP", 226, Color3.fromRGB(140, 80, 40), function()
-        ServerHop:Hop()
+    MakeBtn("🎮 DROP CLAW NOW", 250, Color3.fromRGB(40, 120, 80), function()
+        Engine:PlayClaw()
     end)
     
-    local Footer = Instance.new("TextLabel")
-    Footer.Size = UDim2.new(1, 0, 0, 20)
-    Footer.Position = UDim2.new(0, 0, 1, -25)
-    Footer.BackgroundTransparency = 1
-    Footer.Text = "[RightShift] Toggle UI | Axiom v3.0"
-    Footer.TextColor3 = Color3.fromRGB(100, 100, 140)
-    Footer.Font = Enum.Font.Gotham
-    Footer.TextSize = 10
-    Footer.Parent = Main
+    MakeBtn("🔄 HOP SERVER NOW", 295, Color3.fromRGB(140, 70, 30), function()
+        Hopper:Hop()
+    end)
     
+    -- Keybind toggle
     UserInputService.InputBegan:Connect(function(input, gpe)
-        if not gpe and input.KeyCode == Config.ToggleKey then
-            Main.Visible = not Main.Visible
+        if not gpe and input.KeyCode == Enum.KeyCode.RightShift then
+            Frame.Visible = not Frame.Visible
         end
     end)
     
+    -- Loop updater for UI
     task.spawn(function()
         while ScreenGui.Parent do
             pcall(function()
-                local count = EggScanner:CountEggs()
-                local status = Config.FullAuto and (State.IsHopping and "Hopping Server..." or "Farming...") or "Paused"
-                StatBox.Text = string.format("🥚 Eggs: %d | Drops: %d | Hops: %d\nStatus: %s", count, State.TotalPlayed, State.TotalHops, status)
+                local count = Engine:CountEggs()
+                StatusText.Text = "🟢 Status: " .. State.Status
+                StatDetails.Text = string.format("🥚 Eggs: %d | 🎮 Plays: %d | 🔄 Hops: %d", count, State.TotalPlays, State.TotalHops)
             end)
-            task.wait(1.5)
+            task.wait(1)
         end
     end)
+    
+    if getgenv then
+        getgenv().AxiomCleanup = function()
+            pcall(function() ScreenGui:Destroy() end)
+        end
+    end
 end
 
 -- ═══════════════════════════════════════════
--- INIT
+-- AUTO-LOOP THREAD
 -- ═══════════════════════════════════════════
-print("[Axiom] PS99 Map 143 Claw Automation Loaded!")
-BuildUI()
-RunPipeline()
+task.spawn(function()
+    while true do
+        if Config.FullAuto and not State.IsHopping then
+            pcall(function()
+                local count = Engine:CountEggs()
+                
+                -- Check for empty / hop
+                if Config.AutoHopWhenEmpty and count <= Config.MinEggsBeforeHop then
+                    State.EmptyStreak = State.EmptyStreak + 1
+                    if State.EmptyStreak >= Config.EmptyCheckCount then
+                        print("[Axiom] Map is empty — Server hopping now!")
+                        Hopper:Hop()
+                        task.wait(10)
+                        return
+                    end
+                else
+                    State.EmptyStreak = 0
+                end
+                
+                -- Execution cycle
+                if Config.AutoTeleportMap then
+                    Engine:TeleportArea143()
+                    task.wait(0.5)
+                    Engine:EnterClawMachine()
+                    task.wait(0.5)
+                end
+                
+                if Config.AutoPlayClaw then
+                    Engine:PlayClaw()
+                end
+            end)
+        end
+        task.wait(Config.CycleDelay)
+    end
+end)
+
+-- ═══════════════════════════════════════════
+-- LAUNCH
+-- ═══════════════════════════════════════════
+pcall(CreateUI)
+print("------------------------------------------")
+print("⚡ [AXIOM] v4.0 PS99 CLAW SCRIPT LOADED!")
+print("⚡ Press RightShift to Toggle UI")
+print("------------------------------------------")
